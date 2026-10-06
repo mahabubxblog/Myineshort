@@ -24,6 +24,8 @@ import {
   getSavedGitHubToken,
   saveGitHubToken,
   commitVideosToGitHub,
+  getDefaultRepoOwner,
+  getDefaultRepoName,
   GITHUB_REPO_OWNER,
   GITHUB_REPO_NAME,
 } from '../services/githubSync';
@@ -49,6 +51,8 @@ export const AdminStudioModal: React.FC<AdminStudioModalProps> = ({
 
   // GitHub token state
   const [githubToken, setGithubToken] = useState('');
+  const [repoOwner, setRepoOwner] = useState(getDefaultRepoOwner());
+  const [repoName, setRepoName] = useState(getDefaultRepoName());
   const [showTokenSettings, setShowTokenSettings] = useState(false);
   const [isCopiedJson, setIsCopiedJson] = useState(false);
 

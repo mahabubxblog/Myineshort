@@ -1,11 +1,59 @@
 import { VideoItem } from '../types/video';
 import { INITIAL_VIDEOS } from '../data/defaultVideos';
 
-export const GITHUB_REPO_OWNER = 'demox2025';
-export const GITHUB_REPO_NAME = 'my-shorts-app';
-export const GITHUB_FILE_PATH = 'public/videos.json';
-
 const GITHUB_TOKEN_KEY = 'sniptok_admin_github_token';
+const GITHUB_OWNER_KEY = 'sniptok_admin_github_owner';
+const GITHUB_REPO_KEY = 'sniptok_admin_github_repo';
+
+export const GITHUB_REPO_OWNER = 'mahabubxblog';
+export const GITHUB_REPO_NAME = 'my-shorts-app';
+
+/**
+ * Auto-detect GitHub Owner from browser hostname (e.g. mahabubxblog.github.io -> mahabubxblog)
+ */
+export function getDefaultRepoOwner(): string {
+  try {
+    const saved = localStorage.getItem(GITHUB_OWNER_KEY);
+    if (saved && saved.trim()) return saved.trim();
+
+    const host = window.location.hostname;
+    if (host.includes('.github.io')) {
+      return host.split('.github.io')[0].trim();
+    }
+  } catch {}
+  return 'mahabubxblog';
+}
+
+/**
+ * Auto-detect GitHub Repo name from pathname or default
+ */
+export function getDefaultRepoName(): string {
+  try {
+    const saved = localStorage.getItem(GITHUB_REPO_KEY);
+    if (saved && saved.trim()) return saved.trim();
+
+    const path = window.location.pathname.replace(/^\/|\/$/g, '');
+    if (path) {
+      const seg = path.split('/')[0];
+      if (seg) return seg.trim();
+    }
+    // If hosted at root mahabubxblog.github.io
+    const host = window.location.hostname;
+    if (host.includes('.github.io')) {
+      return host; // e.g. mahabubxblog.github.io
+    }
+  } catch {}
+  return 'my-shorts-app';
+}
+
+export function saveRepoConfig(owner: string, repo: string): void {
+  try {
+    localStorage.setItem(GITHUB_OWNER_KEY, owner.trim());
+    localStorage.setItem(GITHUB_REPO_KEY, repo.trim());
+  } catch (err) {
+    console.error('Failed to save repo config:', err);
+  }
+}
 
 export function getSavedGitHubToken(): string {
   try {
@@ -29,32 +77,28 @@ export function saveGitHubToken(token: string): void {
  */
 export async function fetchLiveVideosFromGitHub(): Promise<VideoItem[]> {
   const timestamp = Date.now();
-  // 1. Try raw githubusercontent directly with cache-busting
-  const rawUrl = `https://raw.githubusercontent.com/${GITHUB_REPO_OWNER}/${GITHUB_REPO_NAME}/main/${GITHUB_FILE_PATH}?_t=${timestamp}`;
-  // 2. Fallback to local /videos.json path
-  const localUrl = `/videos.json?_t=${timestamp}`;
+  const owner = getDefaultRepoOwner();
+  const repo = getDefaultRepoName();
 
-  try {
-    const res = await fetch(rawUrl);
-    if (res.ok) {
-      const data = await res.json();
-      if (Array.isArray(data) && data.length > 0) {
-        return data;
+  // Try both possible paths (public/videos.json and videos.json)
+  const urlsToTry = [
+    `https://raw.githubusercontent.com/${owner}/${repo}/main/public/videos.json?_t=${timestamp}`,
+    `https://raw.githubusercontent.com/${owner}/${repo}/main/videos.json?_t=${timestamp}`,
+    `/public/videos.json?_t=${timestamp}`,
+    `/videos.json?_t=${timestamp}`,
+  ];
+
+  for (const url of urlsToTry) {
+    try {
+      const res = await fetch(url);
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data) && data.length > 0) {
+          return data;
+        }
       }
-    }
-  } catch {
-    // If raw fails, fallback to local path
+    } catch {}
   }
-
-  try {
-    const resLocal = await fetch(localUrl);
-    if (resLocal.ok) {
-      const data = await resLocal.json();
-      if (Array.isArray(data) && data.length > 0) {
-        return data;
-      }
-    }
-  } catch {}
 
   // Fallback to local storage if available
   try {
@@ -73,13 +117,19 @@ export async function fetchLiveVideosFromGitHub(): Promise<VideoItem[]> {
  */
 export async function commitVideosToGitHub(
   token: string,
-  updatedVideos: VideoItem[]
+  updatedVideos: VideoItem[],
+  customOwner?: string,
+  customRepo?: string
 ): Promise<{ success: boolean; message: string }> {
   if (!token || !token.trim()) {
     throw new Error('দয়া করে আপনার GitHub Token প্রবেশ করান।');
   }
 
-  const apiUrl = `https://api.github.com/repos/${GITHUB_REPO_OWNER}/${GITHUB_REPO_NAME}/contents/${GITHUB_FILE_PATH}`;
+  const owner = customOwner?.trim() || getDefaultRepoOwner();
+  const repo = customRepo?.trim() || getDefaultRepoName();
+  const filePath = 'public/videos.json';
+
+  const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${filePath}`;
 
   // 1. Get current file sha
   let sha = '';
@@ -125,16 +175,23 @@ export async function commitVideosToGitHub(
   if (!putRes.ok) {
     const errorData = await putRes.json().catch(() => ({}));
     const errorMsg = errorData.message || putRes.statusText;
+
+    if (putRes.status === 403 || errorMsg.includes('Resource not accessible')) {
+      throw new Error(
+        `টোকেন পারমিশন এরর: আপনার GitHub Token-এ "${owner}/${repo}" রিপোজিটরির জন্য Contents: "Read and write" পারমিশন দিন।`
+      );
+    }
+    if (putRes.status === 404) {
+      throw new Error(`GitHub রিপোজিটরি "${owner}/${repo}" পাওয়া যায়নি। রিপোজিটরির নাম সঠিক কি না চেক করুন।`);
+    }
     if (putRes.status === 401) {
       throw new Error('ভুল বা মেয়াদোত্তীর্ণ GitHub Token! দয়া করে সঠিক টোকেন দিন।');
     }
-    if (putRes.status === 404) {
-      throw new Error('GitHub রিপোজিটরি পাওয়া যায়নি। রিপোজিটরির নাম বা পারমিশন চেক করুন।');
-    }
+
     throw new Error(`GitHub সেভ করতে ব্যর্থ: ${errorMsg}`);
   }
 
-  // Also cache locally in this browser
+  // Also cache locally
   try {
     localStorage.setItem('sniptok_custom_videos_list', JSON.stringify(updatedVideos));
   } catch {}
