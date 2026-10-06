@@ -1,0 +1,7 @@
+{
+  "name": "SnipTok - Personal Offline Shorts",
+  "description": "A personal TikTok and Shorts style vertical video app with custom uploads and selective offline video downloading.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
