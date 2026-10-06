@@ -12,25 +12,21 @@ export function normalizeVideoUrl(rawUrl: string): string {
   if (trimmed.includes('dropbox.com')) {
     try {
       const urlObj = new URL(trimmed);
-      // Replace host with direct streaming host dl.dropboxusercontent.com
-      urlObj.hostname = 'dl.dropboxusercontent.com';
-      // Remove dl=0 and ensure raw=1
+      // DO NOT use dl.dropboxusercontent.com for modern scl/fi links (it returns 404)!
+      // Using www.dropbox.com with raw=1 works for BOTH old /s/ and modern /scl/fi/ links
+      if (urlObj.hostname === 'dl.dropboxusercontent.com') {
+        urlObj.hostname = 'www.dropbox.com';
+      }
+      // Remove dl parameter and enforce raw=1
       urlObj.searchParams.delete('dl');
       urlObj.searchParams.set('raw', '1');
       return urlObj.toString();
     } catch {
       // Fallback string replacement if URL parse fails
       let converted = trimmed
-        .replace('www.dropbox.com', 'dl.dropboxusercontent.com')
-        .replace('dropbox.com', 'dl.dropboxusercontent.com');
-      if (converted.includes('?')) {
-        converted = converted.replace('dl=0', 'raw=1');
-        if (!converted.includes('raw=1')) {
-          converted += '&raw=1';
-        }
-      } else {
-        converted += '?raw=1';
-      }
+        .replace('dl.dropboxusercontent.com', 'www.dropbox.com')
+        .replace(/([?&])dl=[01]/g, '');
+      converted += (converted.includes('?') ? '&' : '?') + 'raw=1';
       return converted;
     }
   }

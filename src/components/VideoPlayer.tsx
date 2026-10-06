@@ -14,6 +14,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { VideoItem } from '../types/video';
+import { normalizeVideoUrl } from '../utils/urlParser';
 import {
   isVideoOffline,
   getOfflineVideoUrl,
@@ -51,7 +52,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [isSavedOffline, setIsSavedOffline] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState(0);
-  const [activeVideoSrc, setActiveVideoSrc] = useState<string>(video.videoUrl);
+  const [activeVideoSrc, setActiveVideoSrc] = useState<string>(normalizeVideoUrl(video.videoUrl));
+  const [hasLoadError, setHasLoadError] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [heartAnim, setHeartAnim] = useState<{ x: number; y: number } | null>(null);
@@ -60,6 +62,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   // Check offline status and get blob if cached
   useEffect(() => {
     let isMounted = true;
+    setHasLoadError(false);
 
     async function checkOffline() {
       const offline = await isVideoOffline(video.id);
@@ -74,9 +77,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         }
       }
 
-      // If not offline and online, use standard url
+      // If not offline and online, use normalized direct streaming url
       if (isMounted) {
-        setActiveVideoSrc(video.videoUrl);
+        setActiveVideoSrc(normalizeVideoUrl(video.videoUrl));
       }
     }
 
@@ -243,15 +246,59 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           </p>
         </div>
       ) : (
-        <video
-          ref={videoRef}
-          src={activeVideoSrc}
-          loop
-          playsInline
-          muted={isMuted}
-          onTimeUpdate={handleTimeUpdate}
-          className="w-full h-full object-cover object-center max-w-md mx-auto"
-        />
+        <>
+          <video
+            ref={videoRef}
+            src={activeVideoSrc}
+            loop
+            playsInline
+            muted={isMuted}
+            onTimeUpdate={handleTimeUpdate}
+            onError={() => {
+              console.warn('Video failed to stream:', activeVideoSrc);
+              setHasLoadError(true);
+            }}
+            onLoadedData={() => setHasLoadError(false)}
+            className="w-full h-full object-cover object-center max-w-md mx-auto"
+          />
+
+          {hasLoadError && (
+            <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/85 p-6 text-center text-white">
+              <div className="w-12 h-12 rounded-full bg-rose-950/80 border border-rose-800 flex items-center justify-center text-rose-500 mb-3">
+                <AlertCircle className="w-6 h-6" />
+              </div>
+              <h4 className="font-bold text-sm mb-1">ভিডিওটি লোড করা যাচ্ছে না</h4>
+              <p className="text-xs text-zinc-400 mb-4 max-w-xs leading-relaxed">
+                ড্রপবক্স লিঙ্কটি প্রাইভেট হতে পারে অথবা মেয়াদ শেষ হয়েছে। ড্রপবক্স থেকে "Anyone with link can view" নিশ্চিত করুন।
+              </p>
+              <div className="flex gap-2">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setHasLoadError(false);
+                    const el = videoRef.current;
+                    if (el) {
+                      el.load();
+                      el.play().catch(() => {});
+                    }
+                  }}
+                  className="px-3 py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-semibold"
+                >
+                  পুনরায় চেষ্টা করুন
+                </button>
+                <a
+                  href={video.videoUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={(e) => e.stopPropagation()}
+                  className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-xl text-xs"
+                >
+                  লিঙ্ক ওপেন করুন
+                </a>
+              </div>
+            </div>
+          )}
+        </>
       )}
 
       {/* Center Play/Pause feedback animation */}

@@ -1,4 +1,5 @@
 import { VideoItem, OfflineBlobRecord, UserComment } from '../types/video';
+import { normalizeVideoUrl } from '../utils/urlParser';
 
 const DB_NAME = 'snip_tok_offline_db';
 const DB_VERSION = 1;
@@ -59,7 +60,8 @@ export async function downloadVideoToOffline(
   let blob: Blob;
 
   try {
-    const response = await fetch(video.videoUrl);
+    const streamUrl = normalizeVideoUrl(video.videoUrl);
+    const response = await fetch(streamUrl);
     if (!response.ok) {
       throw new Error(`Failed to download: ${response.statusText}`);
     }
@@ -121,23 +123,30 @@ export async function downloadVideoToOffline(
  */
 export async function saveCustomUploadedVideo(
   video: VideoItem,
-  videoBlob: Blob
+  videoBlob?: Blob
 ): Promise<void> {
   const db = await getDB();
-
-  const record: OfflineBlobRecord = {
-    id: video.id,
-    blob: videoBlob,
-    mimeType: videoBlob.type || 'video/mp4',
-    size: videoBlob.size,
-    downloadedAt: Date.now(),
-    title: video.title,
-  };
+  const hasValidBlob = Boolean(videoBlob && videoBlob.size > 0);
 
   return new Promise((resolve, reject) => {
-    const tx = db.transaction([STORES.OFFLINE_BLOBS, STORES.CUSTOM_VIDEOS], 'readwrite');
+    const storesToOpen = hasValidBlob
+      ? [STORES.OFFLINE_BLOBS, STORES.CUSTOM_VIDEOS]
+      : [STORES.CUSTOM_VIDEOS];
 
-    tx.objectStore(STORES.OFFLINE_BLOBS).put(record);
+    const tx = db.transaction(storesToOpen, 'readwrite');
+
+    if (hasValidBlob && videoBlob) {
+      const record: OfflineBlobRecord = {
+        id: video.id,
+        blob: videoBlob,
+        mimeType: videoBlob.type || 'video/mp4',
+        size: videoBlob.size,
+        downloadedAt: Date.now(),
+        title: video.title,
+      };
+      tx.objectStore(STORES.OFFLINE_BLOBS).put(record);
+    }
+
     tx.objectStore(STORES.CUSTOM_VIDEOS).put(video);
 
     tx.oncomplete = () => resolve();

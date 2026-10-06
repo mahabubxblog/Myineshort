@@ -107,6 +107,13 @@ export default function App() {
     return allVideos;
   }, [allVideos, filterMode, offlineIds]);
 
+  // Keep activeIndex within bounds when displayedVideos list shrinks or changes
+  useEffect(() => {
+    if (displayedVideos.length > 0 && activeIndex >= displayedVideos.length) {
+      setActiveIndex(0);
+    }
+  }, [displayedVideos.length, activeIndex]);
+
   // Handle scroll detection for snapping active video
   const handleScroll = () => {
     const container = containerRef.current;

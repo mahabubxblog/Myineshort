@@ -34,7 +34,15 @@ export async function fetchPublicVideos(): Promise<VideoItem[]> {
     // If response is HTML (like GitHub Pages 404 page), fall back to local storage
     if (!res.ok || !contentType.includes('application/json')) {
       const localCustom = getLocalCustomVideos();
-      return [...localCustom, ...INITIAL_VIDEOS];
+      if (localCustom.length > 0) {
+        const map = new Map<string, VideoItem>();
+        localCustom.forEach((v) => map.set(v.id, v));
+        INITIAL_VIDEOS.forEach((v) => {
+          if (!map.has(v.id)) map.set(v.id, v);
+        });
+        return Array.from(map.values());
+      }
+      return INITIAL_VIDEOS;
     }
 
     const data = await res.json();
@@ -46,7 +54,15 @@ export async function fetchPublicVideos(): Promise<VideoItem[]> {
   }
 
   const localCustom = getLocalCustomVideos();
-  return [...localCustom, ...INITIAL_VIDEOS];
+  if (localCustom.length > 0) {
+    const map = new Map<string, VideoItem>();
+    localCustom.forEach((v) => map.set(v.id, v));
+    INITIAL_VIDEOS.forEach((v) => {
+      if (!map.has(v.id)) map.set(v.id, v);
+    });
+    return Array.from(map.values());
+  }
+  return INITIAL_VIDEOS;
 }
 
 /**

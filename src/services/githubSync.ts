@@ -1,5 +1,6 @@
 import { VideoItem } from '../types/video';
 import { INITIAL_VIDEOS } from '../data/defaultVideos';
+import { normalizeVideoUrl } from '../utils/urlParser';
 
 const GITHUB_TOKEN_KEY = 'sniptok_admin_github_token';
 const GITHUB_OWNER_KEY = 'sniptok_admin_github_owner';
@@ -73,43 +74,142 @@ export function saveGitHubToken(token: string): void {
 
 /**
  * Fetch the latest live video list directly from GitHub.
- * Every device in the world fetches this!
+ * Prioritizes local modifications, then live remote GitHub repository, then fallback defaults.
  */
 export async function fetchLiveVideosFromGitHub(): Promise<VideoItem[]> {
   const timestamp = Date.now();
   const owner = getDefaultRepoOwner();
   const repo = getDefaultRepoName();
 
-  // Try both possible paths (public/videos.json and videos.json)
-  const urlsToTry = [
+  // Helper to ensure all video URLs have clean, working streaming links
+  const sanitizeList = (list: VideoItem[]): VideoItem[] => {
+    return list.map((item) => ({
+      ...item,
+      videoUrl: normalizeVideoUrl(item.videoUrl),
+    }));
+  };
+
+  // 1. Check local saved list first
+  let localVideos: VideoItem[] | null = null;
+  try {
+    const cached = localStorage.getItem('sniptok_custom_videos_list');
+    if (cached) {
+      const parsed = JSON.parse(cached);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        localVideos = sanitizeList(parsed);
+      }
+    }
+  } catch {}
+
+  // 2. Try remote live GitHub repository (raw.githubusercontent.com)
+  const remoteUrls = [
     `https://raw.githubusercontent.com/${owner}/${repo}/main/public/videos.json?_t=${timestamp}`,
     `https://raw.githubusercontent.com/${owner}/${repo}/main/videos.json?_t=${timestamp}`,
-    `/public/videos.json?_t=${timestamp}`,
-    `/videos.json?_t=${timestamp}`,
   ];
 
-  for (const url of urlsToTry) {
+  for (const url of remoteUrls) {
     try {
       const res = await fetch(url);
       if (res.ok) {
         const data = await res.json();
         if (Array.isArray(data) && data.length > 0) {
-          return data;
+          const sanitized = sanitizeList(data);
+          // Sync into localStorage
+          try {
+            localStorage.setItem('sniptok_custom_videos_list', JSON.stringify(sanitized));
+          } catch {}
+          return sanitized;
         }
       }
     } catch {}
   }
 
-  // Fallback to local storage if available
-  try {
-    const cached = localStorage.getItem('sniptok_custom_videos_list');
-    if (cached) {
-      const parsed = JSON.parse(cached);
-      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-    }
-  } catch {}
+  // 3. If local modifications exist on this device, keep them!
+  if (localVideos && localVideos.length > 0) {
+    return localVideos;
+  }
 
-  return INITIAL_VIDEOS;
+  // 4. Bundled fallback
+  const fallbackUrls = [
+    `/public/videos.json?_t=${timestamp}`,
+    `/videos.json?_t=${timestamp}`,
+  ];
+
+  for (const url of fallbackUrls) {
+    try {
+      const res = await fetch(url);
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data) && data.length > 0) {
+          return sanitizeList(data);
+        }
+      }
+    } catch {}
+  }
+
+  return sanitizeList(INITIAL_VIDEOS);
+}
+
+/**
+ * Verify GitHub Token validity and write permissions on the repository
+ */
+export async function verifyGitHubToken(
+  token: string,
+  customOwner?: string,
+  customRepo?: string
+): Promise<{ valid: boolean; canPush: boolean; message: string }> {
+  if (!token || !token.trim()) {
+    return { valid: false, canPush: false, message: 'টোকেন ফাঁকা রাখা যাবে না।' };
+  }
+
+  const owner = customOwner?.trim() || getDefaultRepoOwner();
+  const repo = customRepo?.trim() || getDefaultRepoName();
+
+  try {
+    const res = await fetch(`https://api.github.com/repos/${owner}/${repo}`, {
+      headers: {
+        Authorization: `Bearer ${token.trim()}`,
+        Accept: 'application/vnd.github.v3+json',
+      },
+    });
+
+    if (res.status === 401) {
+      return { valid: false, canPush: false, message: 'ভুল বা মেয়াদোত্তীর্ণ GitHub Token!' };
+    }
+
+    if (res.status === 404) {
+      return {
+        valid: false,
+        canPush: false,
+        message: `রিপোজিটরি "${owner}/${repo}" পাওয়া যায়নি। ইউজারনেম ও রিপোজিটরি নাম সঠিক কিনা চেক করুন।`,
+      };
+    }
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      return { valid: false, canPush: false, message: err.message || res.statusText };
+    }
+
+    const data = await res.json();
+    const canPush = Boolean(data.permissions?.push || data.permissions?.admin);
+
+    if (!canPush) {
+      return {
+        valid: true,
+        canPush: false,
+        message: `টোকেনটি পাওয়া গেছে কিন্তু "${owner}/${repo}"-তে লেখার (Write/Push) পারমিশন নেই। "repo" পারমিশন সহ ক্লাসিক টোকেন তৈরি করুন।`,
+      };
+    }
+
+    return {
+      valid: true,
+      canPush: true,
+      message: `টোকেন শতভাগ কার্যকর! "${owner}/${repo}" রিপোজিটরিতে সেভ করার পূর্ণ অনুমতি আছে।`,
+    };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'কানেকশন চেক করতে সমস্যা হয়েছে।';
+    return { valid: false, canPush: false, message: msg };
+  }
 }
 
 /**
@@ -178,11 +278,11 @@ export async function commitVideosToGitHub(
 
     if (putRes.status === 403 || errorMsg.includes('Resource not accessible')) {
       throw new Error(
-        `টোকেন পারমিশন এরর: আপনার GitHub Token-এ "${owner}/${repo}" রিপোজিটরির জন্য Contents: "Read and write" পারমিশন দিন।`
+        `টোকেন পারমিশন এরর: আপনার GitHub Token-এ "${owner}/${repo}" রিপোজিটরির জন্য Write/repo পারমিশন নেই। (টোকেন বানানোর সময় 'repo' চেকবক্স টিক দিতে হবে)`
       );
     }
     if (putRes.status === 404) {
-      throw new Error(`GitHub রিপোজিটরি "${owner}/${repo}" পাওয়া যায়নি। রিপোজিটরির নাম সঠিক কি না চেক করুন।`);
+      throw new Error(`GitHub রিপোজিটরি "${owner}/${repo}" পাওয়া যায়নি। ইউজারনেম ও রিপোজিটরির নাম সঠিক কি না চেক করুন।`);
     }
     if (putRes.status === 401) {
       throw new Error('ভুল বা মেয়াদোত্তীর্ণ GitHub Token! দয়া করে সঠিক টোকেন দিন।');

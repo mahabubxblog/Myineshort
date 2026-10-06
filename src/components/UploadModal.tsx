@@ -1,6 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { X, Upload, Link as LinkIcon, Film, CheckCircle2, AlertCircle } from 'lucide-react';
 import { VideoItem } from '../types/video';
+import { normalizeVideoUrl } from '../utils/urlParser';
 import { saveCustomUploadedVideo } from '../services/storage';
 
 interface UploadModalProps {
@@ -96,13 +97,15 @@ export const UploadModal: React.FC<UploadModalProps> = ({ isOpen, onClose, onVid
           return;
         }
 
+        const normalizedUrl = normalizeVideoUrl(videoUrlInput.trim());
+
         const newVideo: VideoItem = {
           id: videoId,
           title: title.trim(),
           description: description.trim() || title.trim(),
           creator: creator.trim() || 'অনলাইন শর্টস',
           creatorHandle: '@online_feed',
-          videoUrl: videoUrlInput.trim(),
+          videoUrl: normalizedUrl,
           tags,
           audioTrack: audioTrack.trim() || 'অনলাইন অডিও',
           likes: 1,
@@ -115,19 +118,22 @@ export const UploadModal: React.FC<UploadModalProps> = ({ isOpen, onClose, onVid
 
         // If user wants to fetch and cache it now, we can convert
         try {
-          const resp = await fetch(videoUrlInput.trim());
+          const resp = await fetch(normalizedUrl);
           if (resp.ok) {
             const blob = await resp.blob();
-            newVideo.isOfflineAvailable = true;
-            newVideo.offlineSize = blob.size;
-            await saveCustomUploadedVideo(newVideo, blob);
+            if (blob.size > 0) {
+              newVideo.isOfflineAvailable = true;
+              newVideo.offlineSize = blob.size;
+              await saveCustomUploadedVideo(newVideo, blob);
+            } else {
+              await saveCustomUploadedVideo(newVideo);
+            }
           } else {
-            // save without blob
-            await saveCustomUploadedVideo(newVideo, new Blob([], { type: 'video/mp4' }));
+            await saveCustomUploadedVideo(newVideo);
           }
         } catch {
           // If CORS prevents direct fetch, save with URL
-          await saveCustomUploadedVideo(newVideo, new Blob([], { type: 'video/mp4' }));
+          await saveCustomUploadedVideo(newVideo);
         }
 
         onVideoAdded(newVideo);

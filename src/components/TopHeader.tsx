@@ -32,9 +32,12 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
     <header className="absolute top-0 left-0 right-0 z-40 flex items-center justify-between px-3 md:px-5 py-2.5 bg-gradient-to-b from-black/90 via-black/40 to-transparent pointer-events-auto">
       {/* Zone 1: Brand title wordmark + hidden admin lock */}
       <div className="flex items-center gap-1.5">
-        <a href="/" className="font-display text-lg md:text-xl font-black tracking-tight text-white flex items-center gap-1 drop-shadow-md">
+        <button
+          onClick={() => onFilterChange('all')}
+          className="font-display text-lg md:text-xl font-black tracking-tight text-white flex items-center gap-1 drop-shadow-md text-left"
+        >
           <span className="text-rose-500">Snip</span>Tok
-        </a>
+        </button>
         <button
           onClick={onOpenAdmin}
           className="p-1 rounded-full text-zinc-500 hover:text-rose-400 transition ml-0.5"

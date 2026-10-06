@@ -16,6 +16,8 @@ import {
   Key,
   Copy,
   Check,
+  DownloadCloud,
+  RefreshCw,
 } from 'lucide-react';
 import { VideoItem } from '../types/video';
 import { normalizeVideoUrl } from '../utils/urlParser';
@@ -26,6 +28,8 @@ import {
   commitVideosToGitHub,
   getDefaultRepoOwner,
   getDefaultRepoName,
+  saveRepoConfig,
+  verifyGitHubToken,
   GITHUB_REPO_OWNER,
   GITHUB_REPO_NAME,
 } from '../services/githubSync';
@@ -123,13 +127,44 @@ export const AdminStudioModal: React.FC<AdminStudioModalProps> = ({
     setPreviewTestUrl(normalized);
   };
 
-  // Save Token
+  const [isTestingToken, setIsTestingToken] = useState(false);
+  const [testResult, setTestResult] = useState<{ success: boolean; msg: string } | null>(null);
+
+  // Test token connection live
+  const handleTestToken = async () => {
+    if (!githubToken.trim()) {
+      setTestResult({ success: false, msg: 'দয়া করে টোকেন ইনপুট দিন।' });
+      return;
+    }
+    setIsTestingToken(true);
+    setTestResult(null);
+    const res = await verifyGitHubToken(githubToken, repoOwner, repoName);
+    setIsTestingToken(false);
+    setTestResult({
+      success: res.valid && res.canPush,
+      msg: res.message,
+    });
+  };
+
+  // Save Token & Repo Config
   const handleSaveToken = (e: React.FormEvent) => {
     e.preventDefault();
     saveGitHubToken(githubToken);
+    saveRepoConfig(repoOwner, repoName);
     setShowTokenSettings(false);
-    setFormMsg({ type: 'success', text: 'GitHub টোকেন সংরক্ষিত হয়েছে!' });
+    setFormMsg({ type: 'success', text: 'GitHub কনফিগারেশন সংরক্ষিত হয়েছে!' });
     setTimeout(() => setFormMsg(null), 3000);
+  };
+
+  // Download videos.json file
+  const handleDownloadJson = () => {
+    const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(videos, null, 2));
+    const downloadAnchor = document.createElement('a');
+    downloadAnchor.setAttribute('href', dataStr);
+    downloadAnchor.setAttribute('download', 'videos.json');
+    document.body.appendChild(downloadAnchor);
+    downloadAnchor.click();
+    downloadAnchor.remove();
   };
 
   // Copy JSON for manual backup
@@ -201,27 +236,39 @@ export const AdminStudioModal: React.FC<AdminStudioModalProps> = ({
         updatedList = [newVideo, ...videos];
       }
 
-      // If GitHub Token exists, commit directly to GitHub repository!
-      if (githubToken.trim()) {
-        await commitVideosToGitHub(githubToken, updatedList);
-        setFormMsg({
-          type: 'success',
-          text: '✓ সরাসরি গিটহাবে সেভ হয়েছে! বিশ্বের সব ফোনে ভিডিওটি লাইভ হয়ে গেছে!',
-        });
-      } else {
-        // Saved in local storage fallback
-        localStorage.setItem('sniptok_custom_videos_list', JSON.stringify(updatedList));
-        setFormMsg({
-          type: 'success',
-          text: 'ভিডিও যোগ হয়েছে! (সবার ফোনে অটো-সিঙ্কের জন্য নিচে গিটহাব টোকেন অপশন অন করুন)',
-        });
-      }
-
+      // 1. ALWAYS save and cache locally first so video is immediately playable on this device
+      localStorage.setItem('sniptok_custom_videos_list', JSON.stringify(updatedList));
       onVideosUpdated();
-      setTimeout(() => {
-        setShowForm(false);
-        setFormMsg(null);
-      }, 1200);
+
+      // 2. If GitHub Token is configured, sync directly to GitHub repository
+      if (githubToken.trim()) {
+        try {
+          await commitVideosToGitHub(githubToken, updatedList, repoOwner, repoName);
+          setFormMsg({
+            type: 'success',
+            text: '✓ সরাসরি গিটহাবে সেভ হয়েছে! বিশ্বের সব ফোনে ভিডিওটি লাইভ হয়ে গেছে!',
+          });
+          setTimeout(() => {
+            setShowForm(false);
+            setFormMsg(null);
+          }, 1500);
+        } catch (gitErr: unknown) {
+          const errMsg = gitErr instanceof Error ? gitErr.message : 'গিটহাব সিঙ্ক ব্যর্থ';
+          setFormMsg({
+            type: 'error',
+            text: `ভিডিও আপনার ফোনে সেভ হয়েছে! কিন্তু গিটহাবে লাইভ সিঙ্ক এরর: ${errMsg}`,
+          });
+        }
+      } else {
+        setFormMsg({
+          type: 'success',
+          text: '✓ ভিডিও আপনার ফোনে সেভ হয়েছে! (সবার ফোনে অটো-সিঙ্কের জন্য উপরে গিটহাব টোকেন দিন)',
+        });
+        setTimeout(() => {
+          setShowForm(false);
+          setFormMsg(null);
+        }, 1500);
+      }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'সংরক্ষণে সমস্যা হয়েছে।';
       setFormMsg({ type: 'error', text: msg });
@@ -236,13 +283,18 @@ export const AdminStudioModal: React.FC<AdminStudioModalProps> = ({
       try {
         const updatedList = videos.filter((v) => v.id !== id);
 
-        if (githubToken.trim()) {
-          await commitVideosToGitHub(githubToken, updatedList);
-        } else {
-          localStorage.setItem('sniptok_custom_videos_list', JSON.stringify(updatedList));
-        }
-
+        // Always update local storage first
+        localStorage.setItem('sniptok_custom_videos_list', JSON.stringify(updatedList));
         onVideosUpdated();
+
+        if (githubToken.trim()) {
+          try {
+            await commitVideosToGitHub(githubToken, updatedList, repoOwner, repoName);
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : 'গিটহাবে ডিলিট ব্যর্থ';
+            alert(`আপনার ফোন থেকে মুছে গেছে, তবে গিটহাব সিঙ্ক এরর: ${msg}`);
+          }
+        }
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : 'ডিলিট করতে সমস্যা হয়েছে।';
         alert(msg);
@@ -346,54 +398,145 @@ export const AdminStudioModal: React.FC<AdminStudioModalProps> = ({
 
             {/* GitHub Token Setup Drawer (One-time connection) */}
             {showTokenSettings && (
-              <form onSubmit={handleSaveToken} className="mb-3 p-3 bg-zinc-800/90 border border-emerald-500/40 rounded-xl space-y-2 text-xs">
-                <div className="flex items-center justify-between">
-                  <span className="font-bold text-emerald-400 flex items-center gap-1">
-                    <Key className="w-3.5 h-3.5" />
-                    GitHub Personal Access Token (PAT)
+              <form onSubmit={handleSaveToken} className="mb-4 p-4 bg-zinc-800/95 border border-emerald-500/40 rounded-2xl space-y-3 text-xs shadow-xl">
+                <div className="flex items-center justify-between pb-2 border-b border-zinc-700">
+                  <span className="font-bold text-emerald-400 flex items-center gap-1.5 text-sm">
+                    <Key className="w-4 h-4 text-emerald-400" />
+                    GitHub লাইভ সিঙ্ক কনফিগারেশন
                   </span>
                   <button
                     type="button"
                     onClick={() => setShowTokenSettings(false)}
-                    className="text-zinc-400 hover:text-white"
+                    className="text-zinc-400 hover:text-white p-1"
                   >
-                    বন্ধ
+                    <X className="w-4 h-4" />
                   </button>
                 </div>
+
                 <p className="text-[11px] text-zinc-300 leading-relaxed">
-                  এই টোকেনটি দিলে আপনি ওয়েবসাইট থেকেই সেভ চাপলেই স্বয়ংক্রিয়ভাবে গিটহাবে <code>{GITHUB_REPO_OWNER}/{GITHUB_REPO_NAME}</code> রিপোজিটরিতে জমা হবে এবং বিশ্বের সব ডিভাইসে ১ সেকেন্ডে ভিডিও লাইভ হয়ে যাবে!
+                  আপনার ওয়েবসাইটের ভিডিওগুলো সবার ফোনে লাইভ করার জন্য আপনার GitHub রিপোজিটরি ও টোকেন সেট করুন:
                 </p>
-                <div className="flex gap-2">
-                  <input
-                    type="password"
-                    value={githubToken}
-                    onChange={(e) => setGithubToken(e.target.value)}
-                    placeholder="github_pat_... বা ghp_... টোকেন পেস্ট করুন"
-                    className="flex-1 bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-1.5 text-xs text-white"
-                  />
-                  <button
-                    type="submit"
-                    className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold rounded-lg text-xs"
-                  >
-                    সেভ
-                  </button>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[10px] text-zinc-400 font-medium mb-1">
+                      GitHub ইউজারনেম (Owner):
+                    </label>
+                    <input
+                      type="text"
+                      value={repoOwner}
+                      onChange={(e) => setRepoOwner(e.target.value.trim())}
+                      placeholder="mahabubxblog"
+                      className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-2.5 py-1.5 text-xs text-white font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-zinc-400 font-medium mb-1">
+                      রিপোজিটরির নাম (Repo):
+                    </label>
+                    <input
+                      type="text"
+                      value={repoName}
+                      onChange={(e) => setRepoName(e.target.value.trim())}
+                      placeholder="mahabubxblog.github.io"
+                      className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-2.5 py-1.5 text-xs text-white font-mono"
+                    />
+                  </div>
                 </div>
-                <div className="flex items-center justify-between pt-1 text-[10px] text-zinc-400">
-                  <a
-                    href="https://github.com/settings/tokens?type=beta"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-rose-400 hover:underline flex items-center gap-1"
+
+                <div>
+                  <label className="block text-[10px] text-zinc-400 font-medium mb-1 flex items-center justify-between">
+                    <span>GitHub Access Token (ghp_... বা github_pat_...)</span>
+                    <span className="text-[10px] text-amber-400">('repo' পারমিশন আবশ্যক)</span>
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      type="password"
+                      value={githubToken}
+                      onChange={(e) => setGithubToken(e.target.value.trim())}
+                      placeholder="ghp_... টোকেন পেস্ট করুন"
+                      className="flex-1 bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-1.5 text-xs text-white font-mono"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleTestToken}
+                      disabled={isTestingToken}
+                      className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-600 rounded-lg text-xs font-medium flex items-center gap-1 shrink-0"
+                    >
+                      {isTestingToken ? (
+                        <>
+                          <RefreshCw className="w-3 h-3 animate-spin" /> চেকিং...
+                        </>
+                      ) : (
+                        'যাচাই করুন'
+                      )}
+                    </button>
+                    <button
+                      type="submit"
+                      className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold rounded-lg text-xs shadow-md shadow-emerald-600/30 shrink-0"
+                    >
+                      সেভ
+                    </button>
+                  </div>
+                </div>
+
+                {/* Live Test Feedback */}
+                {testResult && (
+                  <div
+                    className={`p-2.5 rounded-xl text-xs flex items-start gap-2 ${
+                      testResult.success
+                        ? 'bg-emerald-950/60 border border-emerald-800 text-emerald-200'
+                        : 'bg-red-950/60 border border-red-800 text-red-200'
+                    }`}
                   >
-                    টোকেন কীভাবে তৈরি করবেন? (GitHub Settings ➔ Tokens) <ExternalLink className="w-2.5 h-2.5" />
-                  </a>
+                    {testResult.success ? (
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                    ) : (
+                      <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+                    )}
+                    <span className="leading-relaxed">{testResult.msg}</span>
+                  </div>
+                )}
+
+                {/* 1-Click Classic Token Guide Card */}
+                <div className="p-3 bg-zinc-900/90 border border-zinc-700/80 rounded-xl space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-semibold text-rose-400 flex items-center gap-1">
+                      <Sparkles className="w-3.5 h-3.5" /> সহজ ১-ক্লিক সমাধান (Classic Token):
+                    </span>
+                    <a
+                      href="https://github.com/settings/tokens/new?scopes=repo&description=SnipTok+Admin"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-2.5 py-1 bg-rose-600 hover:bg-rose-500 text-white rounded-lg text-[10px] font-bold inline-flex items-center gap-1 shadow-sm"
+                    >
+                      👉 ১-ক্লিকে টোকেন পাতা খুলুন <ExternalLink className="w-2.5 h-2.5" />
+                    </a>
+                  </div>
+                  <ol className="text-[10px] text-zinc-300 list-decimal list-inside space-y-0.5 leading-relaxed">
+                    <li>উপরের বোতামে চাপ দিন (এতে <strong>'repo'</strong> অপশনটি নিজে থেকেই টিক দেওয়া থাকবে)।</li>
+                    <li>পেজের একেবারে নিচে গিয়ে সবুজ <strong>'Generate token'</strong> বাটনে চাপ দিন।</li>
+                    <li>যে <code>ghp_...</code> কোডটি পাবেন সেটি কপি করে উপরের বক্সে পেস্ট করে সেভ করুন।</li>
+                  </ol>
+                </div>
+
+                {/* Actions */}
+                <div className="flex items-center justify-between pt-1 border-t border-zinc-800 text-[10px]">
+                  <button
+                    type="button"
+                    onClick={handleDownloadJson}
+                    className="text-zinc-300 hover:text-white flex items-center gap-1 underline"
+                  >
+                    <DownloadCloud className="w-3 h-3 text-rose-400" />
+                    videos.json ফাইল ডাউনলোড
+                  </button>
                   <button
                     type="button"
                     onClick={handleCopyJson}
                     className="text-zinc-300 hover:text-white flex items-center gap-1"
                   >
                     {isCopiedJson ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-                    {isCopiedJson ? 'কপি হয়েছে' : 'ভিডিও JSON কপি করুন'}
+                    {isCopiedJson ? 'কপি হয়েছে' : 'JSON টেক্সট কপি করুন'}
                   </button>
                 </div>
               </form>
@@ -434,18 +577,50 @@ export const AdminStudioModal: React.FC<AdminStudioModalProps> = ({
 
                 {formMsg && (
                   <div
-                    className={`p-2.5 rounded-xl text-xs flex items-center gap-2 ${
+                    className={`p-3 rounded-xl text-xs flex flex-col gap-2 ${
                       formMsg.type === 'success'
                         ? 'bg-emerald-950/60 border border-emerald-800 text-emerald-200'
                         : 'bg-red-950/60 border border-red-800 text-red-200'
                     }`}
                   >
-                    {formMsg.type === 'success' ? (
-                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                    ) : (
-                      <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
+                    <div className="flex items-start gap-2">
+                      {formMsg.type === 'success' ? (
+                        <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                      ) : (
+                        <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+                      )}
+                      <span className="leading-relaxed">{formMsg.text}</span>
+                    </div>
+
+                    {formMsg.type === 'error' && (
+                      <div className="pt-2 border-t border-red-900/60 flex flex-wrap items-center gap-2 text-[11px]">
+                        <a
+                          href="https://github.com/settings/tokens/new?scopes=repo&description=SnipTok+Admin"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="px-2.5 py-1 bg-rose-600 hover:bg-rose-500 text-white rounded-lg font-medium inline-flex items-center gap-1 shadow-sm"
+                        >
+                          🔑 ১-ক্লিকে Classic Token তৈরি করুন <ExternalLink className="w-2.5 h-2.5" />
+                        </a>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowForm(false);
+                            setShowTokenSettings(true);
+                          }}
+                          className="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-lg inline-flex items-center gap-1"
+                        >
+                          <Key className="w-3 h-3 text-amber-400" /> টোকেন সেটিংস খুলুন
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleDownloadJson}
+                          className="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-lg inline-flex items-center gap-1"
+                        >
+                          <DownloadCloud className="w-3 h-3 text-rose-400" /> videos.json ডাউনলোড
+                        </button>
+                      </div>
                     )}
-                    <span>{formMsg.text}</span>
                   </div>
                 )}
 
