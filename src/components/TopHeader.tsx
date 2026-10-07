@@ -103,11 +103,11 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
         {/* Upload Custom / Admin quick trigger */}
         <button
           onClick={onOpenAdmin}
-          className="p-1.5 md:px-2.5 md:py-1 rounded-full bg-rose-600 hover:bg-rose-500 text-white font-medium text-xs flex items-center gap-1 shadow-lg shadow-rose-600/30 transition"
+          className="px-2.5 py-1 rounded-full bg-rose-600 hover:bg-rose-500 text-white font-medium text-[11px] md:text-xs flex items-center gap-1 shadow-lg shadow-rose-600/30 transition shrink-0"
           title="ড্রপবক্স ও ভিডিও যোগ করুন"
         >
           <Plus className="w-3.5 h-3.5" />
-          <span className="hidden sm:inline">+ ড্রপবক্স</span>
+          <span>+ ড্রপবক্স</span>
         </button>
 
         {/* Storage Manager */}

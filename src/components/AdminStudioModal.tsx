@@ -1,8 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import {
   X,
-  Lock,
-  Unlock,
   Plus,
   Trash2,
   Edit3,
@@ -18,10 +16,13 @@ import {
   Check,
   DownloadCloud,
   RefreshCw,
+  Eye,
+  Layers,
+  Settings,
+  ShieldCheck,
 } from 'lucide-react';
 import { VideoItem } from '../types/video';
 import { normalizeVideoUrl } from '../utils/urlParser';
-import { verifyAdminPassword } from '../services/api';
 import {
   getSavedGitHubToken,
   saveGitHubToken,
@@ -30,8 +31,6 @@ import {
   getDefaultRepoName,
   saveRepoConfig,
   verifyGitHubToken,
-  GITHUB_REPO_OWNER,
-  GITHUB_REPO_NAME,
 } from '../services/githubSync';
 
 interface AdminStudioModalProps {
@@ -45,23 +44,25 @@ interface AdminStudioModalProps {
 export const AdminStudioModal: React.FC<AdminStudioModalProps> = ({
   isOpen,
   onClose,
-  videos,
+  videos = [],
   onVideosUpdated,
   onSelectVideoToPlay,
 }) => {
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [inputPassword, setInputPassword] = useState('');
-  const [authError, setAuthError] = useState<string | null>(null);
+  // Safe videos list guard
+  const safeVideos: VideoItem[] = Array.isArray(videos) ? videos : [];
 
-  // GitHub token state
-  const [githubToken, setGithubToken] = useState('');
-  const [repoOwner, setRepoOwner] = useState(getDefaultRepoOwner());
-  const [repoName, setRepoName] = useState(getDefaultRepoName());
-  const [showTokenSettings, setShowTokenSettings] = useState(false);
+  // Active Tab: 'videos' | 'add' | 'github'
+  const [activeTab, setActiveTab] = useState<'videos' | 'add' | 'github'>('videos');
+
+  // GitHub token state with safe initializers
+  const [githubToken, setGithubToken] = useState<string>('');
+  const [repoOwner, setRepoOwner] = useState<string>('mahabubxblog');
+  const [repoName, setRepoName] = useState<string>('my-shorts-app');
   const [isCopiedJson, setIsCopiedJson] = useState(false);
+  const [isTestingToken, setIsTestingToken] = useState(false);
+  const [testResult, setTestResult] = useState<{ success: boolean; msg: string } | null>(null);
 
-  // Form state
-  const [showForm, setShowForm] = useState(false);
+  // Form state for Add/Edit
   const [editingVideoId, setEditingVideoId] = useState<string | null>(null);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -72,109 +73,117 @@ export const AdminStudioModal: React.FC<AdminStudioModalProps> = ({
   const [formMsg, setFormMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [previewTestUrl, setPreviewTestUrl] = useState<string | null>(null);
 
+  // Load configuration on open safely
   useEffect(() => {
     if (isOpen) {
-      const saved = getSavedGitHubToken();
-      if (saved) setGithubToken(saved);
+      try {
+        const savedToken = getSavedGitHubToken();
+        if (savedToken) setGithubToken(savedToken);
+        setRepoOwner(getDefaultRepoOwner());
+        setRepoName(getDefaultRepoName());
+      } catch (err) {
+        console.warn('Config load error:', err);
+      }
     }
   }, [isOpen]);
 
   if (!isOpen) return null;
 
-  // Handle Login with Ma44332211
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setAuthError(null);
-
-    const res = await verifyAdminPassword(inputPassword.trim());
-    if (res.success) {
-      setIsAuthenticated(true);
-    } else {
-      setAuthError('ভুল পাসওয়ার্ড! দয়া করে সঠিক পাসওয়ার্ড দিন।');
-    }
-  };
-
-  // Open Form for Add
+  // Open Form for Adding New Video
   const handleOpenAdd = () => {
     setEditingVideoId(null);
-    setTitle(`ভিডিও #${videos.length + 1}`);
+    setTitle(`ভিডিও #${safeVideos.length + 1}`);
     setDescription('');
     setRawUrl('');
     setCreator('মাহবুব');
     setAudioTrack('অরিজিনাল সুর');
     setFormMsg(null);
     setPreviewTestUrl(null);
-    setShowForm(true);
+    setActiveTab('add');
   };
 
-  // Open Form for Edit
+  // Open Form for Editing Existing Video
   const handleOpenEdit = (v: VideoItem) => {
     setEditingVideoId(v.id);
-    setTitle(v.title);
+    setTitle(v.title || '');
     setDescription(v.description || '');
-    setRawUrl(v.videoUrl);
+    setRawUrl(v.videoUrl || '');
     setCreator(v.creator || 'মাহবুব');
     setAudioTrack(v.audioTrack || 'অরিজিনাল সুর');
     setFormMsg(null);
-    setPreviewTestUrl(v.videoUrl);
-    setShowForm(true);
+    setPreviewTestUrl(normalizeVideoUrl(v.videoUrl || ''));
+    setActiveTab('add');
   };
 
-  // Handle Dropbox / URL Change with Auto Normalization
+  // Handle Dropbox / URL Change with Live Auto-Normalization
   const handleUrlChange = (val: string) => {
     setRawUrl(val);
     const normalized = normalizeVideoUrl(val);
-    setPreviewTestUrl(normalized);
+    setPreviewTestUrl(normalized || null);
   };
-
-  const [isTestingToken, setIsTestingToken] = useState(false);
-  const [testResult, setTestResult] = useState<{ success: boolean; msg: string } | null>(null);
 
   // Test token connection live
   const handleTestToken = async () => {
     if (!githubToken.trim()) {
-      setTestResult({ success: false, msg: 'দয়া করে টোকেন ইনপুট দিন।' });
+      setTestResult({ success: false, msg: 'দয়া করে গিটহাব অ্যাক্সেস টোকেন ইনপুট দিন।' });
       return;
     }
     setIsTestingToken(true);
     setTestResult(null);
-    const res = await verifyGitHubToken(githubToken, repoOwner, repoName);
-    setIsTestingToken(false);
-    setTestResult({
-      success: res.valid && res.canPush,
-      msg: res.message,
-    });
+    try {
+      const res = await verifyGitHubToken(githubToken, repoOwner, repoName);
+      setTestResult({
+        success: res.valid && res.canPush,
+        msg: res.message,
+      });
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'যাচাই ব্যর্থ';
+      setTestResult({ success: false, msg });
+    } finally {
+      setIsTestingToken(false);
+    }
   };
 
   // Save Token & Repo Config
   const handleSaveToken = (e: React.FormEvent) => {
     e.preventDefault();
-    saveGitHubToken(githubToken);
-    saveRepoConfig(repoOwner, repoName);
-    setShowTokenSettings(false);
-    setFormMsg({ type: 'success', text: 'GitHub কনফিগারেশন সংরক্ষিত হয়েছে!' });
-    setTimeout(() => setFormMsg(null), 3000);
+    try {
+      saveGitHubToken(githubToken);
+      saveRepoConfig(repoOwner, repoName);
+      setFormMsg({ type: 'success', text: 'GitHub কনফিগারেশন সংরক্ষিত হয়েছে!' });
+      setTimeout(() => setFormMsg(null), 3000);
+    } catch (err) {
+      console.error(err);
+    }
   };
 
   // Download videos.json file
   const handleDownloadJson = () => {
-    const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(videos, null, 2));
-    const downloadAnchor = document.createElement('a');
-    downloadAnchor.setAttribute('href', dataStr);
-    downloadAnchor.setAttribute('download', 'videos.json');
-    document.body.appendChild(downloadAnchor);
-    downloadAnchor.click();
-    downloadAnchor.remove();
+    try {
+      const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(safeVideos, null, 2));
+      const downloadAnchor = document.createElement('a');
+      downloadAnchor.setAttribute('href', dataStr);
+      downloadAnchor.setAttribute('download', 'videos.json');
+      document.body.appendChild(downloadAnchor);
+      downloadAnchor.click();
+      downloadAnchor.remove();
+    } catch (err) {
+      console.error(err);
+    }
   };
 
   // Copy JSON for manual backup
   const handleCopyJson = () => {
-    navigator.clipboard.writeText(JSON.stringify(videos, null, 2));
-    setIsCopiedJson(true);
-    setTimeout(() => setIsCopiedJson(false), 2000);
+    try {
+      navigator.clipboard.writeText(JSON.stringify(safeVideos, null, 2));
+      setIsCopiedJson(true);
+      setTimeout(() => setIsCopiedJson(false), 2000);
+    } catch {
+      alert('কপি করতে সমস্যা হয়েছে');
+    }
   };
 
-  // Handle Form Submit (Saves to GitHub & Local)
+  // Handle Form Submit (Saves locally first + optionally syncs to GitHub)
   const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormMsg(null);
@@ -201,7 +210,7 @@ export const AdminStudioModal: React.FC<AdminStudioModalProps> = ({
 
       if (editingVideoId) {
         // Edit existing video
-        updatedList = videos.map((v) =>
+        updatedList = safeVideos.map((v) =>
           v.id === editingVideoId
             ? {
                 ...v,
@@ -217,7 +226,7 @@ export const AdminStudioModal: React.FC<AdminStudioModalProps> = ({
         );
       } else {
         // Add new video slot
-        const nextSlot = videos.length + 1;
+        const nextSlot = safeVideos.length + 1;
         const newVideo: VideoItem = {
           id: `vid_${Date.now()}`,
           slotNumber: nextSlot,
@@ -233,11 +242,15 @@ export const AdminStudioModal: React.FC<AdminStudioModalProps> = ({
           sharesCount: 0,
           createdAt: Date.now(),
         };
-        updatedList = [newVideo, ...videos];
+        updatedList = [newVideo, ...safeVideos];
       }
 
-      // 1. ALWAYS save and cache locally first so video is immediately playable on this device
-      localStorage.setItem('sniptok_custom_videos_list', JSON.stringify(updatedList));
+      // 1. ALWAYS save locally first so user instantly sees and plays the video
+      try {
+        localStorage.setItem('sniptok_custom_videos_list', JSON.stringify(updatedList));
+      } catch (e) {
+        console.warn('LocalStorage save warning:', e);
+      }
       onVideosUpdated();
 
       // 2. If GitHub Token is configured, sync directly to GitHub repository
@@ -249,7 +262,7 @@ export const AdminStudioModal: React.FC<AdminStudioModalProps> = ({
             text: '✓ সরাসরি গিটহাবে সেভ হয়েছে! বিশ্বের সব ফোনে ভিডিওটি লাইভ হয়ে গেছে!',
           });
           setTimeout(() => {
-            setShowForm(false);
+            setActiveTab('videos');
             setFormMsg(null);
           }, 1500);
         } catch (gitErr: unknown) {
@@ -262,10 +275,10 @@ export const AdminStudioModal: React.FC<AdminStudioModalProps> = ({
       } else {
         setFormMsg({
           type: 'success',
-          text: '✓ ভিডিও আপনার ফোনে সেভ হয়েছে! (সবার ফোনে অটো-সিঙ্কের জন্য উপরে গিটহাব টোকেন দিন)',
+          text: '✓ ভিডিও আপনার ফোনে সফলভাবে সেভ হয়েছে! (সবার ফোনে অটো-সিঙ্কের জন্য GitHub ট্যাবে টোকেন দিন)',
         });
         setTimeout(() => {
-          setShowForm(false);
+          setActiveTab('videos');
           setFormMsg(null);
         }, 1500);
       }
@@ -281,10 +294,13 @@ export const AdminStudioModal: React.FC<AdminStudioModalProps> = ({
   const handleDelete = async (id: string, vidTitle: string) => {
     if (window.confirm(`আপনি কি "${vidTitle}" ভিডিওটি মুছে ফেলতে চান?`)) {
       try {
-        const updatedList = videos.filter((v) => v.id !== id);
+        const updatedList = safeVideos.filter((v) => v.id !== id);
 
-        // Always update local storage first
-        localStorage.setItem('sniptok_custom_videos_list', JSON.stringify(updatedList));
+        try {
+          localStorage.setItem('sniptok_custom_videos_list', JSON.stringify(updatedList));
+        } catch (e) {
+          console.warn('LocalStorage delete warning:', e);
+        }
         onVideosUpdated();
 
         if (githubToken.trim()) {
@@ -303,514 +319,434 @@ export const AdminStudioModal: React.FC<AdminStudioModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-3 md:p-4">
-      <div className="relative w-full max-w-xl rounded-2xl bg-zinc-900 border border-zinc-800 text-white p-5 md:p-6 shadow-2xl max-h-[92vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150">
-        {/* Header */}
-        <div className="flex items-center justify-between pb-3 border-b border-zinc-800">
-          <div className="flex items-center gap-2">
-            <div className="p-1.5 rounded-lg bg-rose-600/30 text-rose-500">
-              {isAuthenticated ? <Unlock className="w-5 h-5" /> : <Lock className="w-5 h-5" />}
+    <div
+      onClick={onClose}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-3 md:p-6 overflow-y-auto"
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="relative w-full max-w-xl rounded-3xl bg-zinc-900 border border-zinc-700 text-white p-5 md:p-6 shadow-2xl max-h-[92vh] flex flex-col overflow-hidden my-auto"
+      >
+        {/* Top Gradient Stripe */}
+        <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-rose-500 via-pink-500 to-amber-400" />
+
+        {/* Modal Header */}
+        <div className="flex items-center justify-between pb-3 border-b border-zinc-800 shrink-0">
+          <div className="flex items-center gap-2.5">
+            <div className="p-2 rounded-xl bg-rose-500/20 border border-rose-500/40 text-rose-400">
+              <Sparkles className="w-5 h-5 text-rose-400" />
             </div>
             <div>
-              <h2 className="text-base md:text-lg font-bold">ক্রিয়েটর স্টুডিও (অ্যাডমিন প্যানেল)</h2>
-              <p className="text-[11px] text-zinc-400">ভিডিও যোগ ও নিয়ন্ত্রণ (সবার ফোনে লাইভ সিঙ্ক)</p>
+              <h2 className="text-base md:text-lg font-bold text-white flex items-center gap-1.5">
+                ক্রিয়েটর স্টুডিও <span className="text-[10px] px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 font-semibold uppercase tracking-wider">অ্যাডমিন</span>
+              </h2>
+              <p className="text-[11px] text-zinc-400">ড্রপবক্স ভিডিও যোগ, এডিট ও লাইভ সিঙ্ক</p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="p-1 rounded-full hover:bg-zinc-800 text-zinc-400 hover:text-white transition"
+            className="p-1.5 rounded-full bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white transition"
+            title="বন্ধ করুন"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        {/* Auth Screen */}
-        {!isAuthenticated ? (
-          <form onSubmit={handleLogin} className="py-8 flex flex-col items-center max-w-sm mx-auto text-center">
-            <div className="w-14 h-14 rounded-2xl bg-zinc-800 border border-zinc-700 flex items-center justify-center mb-4 text-rose-500 shadow-inner">
-              <Lock className="w-7 h-7" />
-            </div>
+        {/* Navigation Tabs */}
+        <div className="flex items-center gap-1.5 my-3 p-1 bg-zinc-950/80 rounded-2xl border border-zinc-800 shrink-0">
+          <button
+            onClick={() => {
+              setActiveTab('videos');
+              setEditingVideoId(null);
+            }}
+            className={`flex-1 py-2 px-3 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition ${
+              activeTab === 'videos'
+                ? 'bg-zinc-800 text-white shadow-md border border-zinc-700'
+                : 'text-zinc-400 hover:text-white'
+            }`}
+          >
+            <Layers className="w-3.5 h-3.5 text-rose-400" />
+            <span>ভিডিও তালিকা ({safeVideos.length})</span>
+          </button>
 
-            <h3 className="text-base font-bold text-white mb-1">গোপন পাসওয়ার্ড দিন</h3>
-            <p className="text-xs text-zinc-400 leading-relaxed mb-5">
-              ভিডিও যোগ, ডিলিট বা পরিবর্তন করার জন্য আপনার ক্রিয়েটর পাসওয়ার্ডটি প্রবেশ করান।
-            </p>
+          <button
+            onClick={handleOpenAdd}
+            className={`flex-1 py-2 px-3 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition ${
+              activeTab === 'add'
+                ? 'bg-rose-600 text-white shadow-md'
+                : 'text-zinc-400 hover:text-white'
+            }`}
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span>{editingVideoId ? 'ভিডিও এডিট' : '+ নতুন ভিডিও'}</span>
+          </button>
 
-            {authError && (
-              <div className="w-full mb-4 p-2.5 bg-red-950/60 border border-red-800 rounded-xl text-red-200 text-xs flex items-center gap-2">
-                <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
-                <span>{authError}</span>
-              </div>
-            )}
+          <button
+            onClick={() => setActiveTab('github')}
+            className={`flex-1 py-2 px-3 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition ${
+              activeTab === 'github'
+                ? 'bg-emerald-600 text-white shadow-md'
+                : 'text-zinc-400 hover:text-white'
+            }`}
+          >
+            <Key className="w-3.5 h-3.5 text-emerald-300" />
+            <span>GitHub সিঙ্ক</span>
+          </button>
+        </div>
 
-            <div className="w-full space-y-3">
-              <input
-                type="password"
-                required
-                value={inputPassword}
-                onChange={(e) => setInputPassword(e.target.value)}
-                placeholder="পাসওয়ার্ড লিখুন..."
-                className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 text-sm text-center text-white placeholder-zinc-500 focus:outline-none focus:border-rose-500 tracking-wider"
-              />
-
-              <button
-                type="submit"
-                className="w-full py-3 bg-rose-600 hover:bg-rose-500 text-white font-semibold text-xs rounded-xl shadow-lg shadow-rose-600/30 transition flex items-center justify-center gap-1.5"
-              >
-                <Unlock className="w-4 h-4" />
-                অ্যাডমিন মোড আনলক করুন
-              </button>
-            </div>
-          </form>
-        ) : (
-          /* Authenticated Dashboard */
-          <div className="flex-1 overflow-y-auto no-scrollbar py-3 flex flex-col">
-            {/* Top Stat Bar */}
-            <div className="flex items-center justify-between p-3 rounded-xl bg-zinc-800/60 border border-zinc-700/60 mb-3">
-              <div className="flex items-center gap-2">
-                <Video className="w-4 h-4 text-rose-500" />
-                <span className="text-xs font-semibold text-zinc-300">
-                  মোট ভিডিও: <strong className="text-white text-sm tabular-nums">{videos.length}</strong> / ১০০
-                </span>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => setShowTokenSettings(!showTokenSettings)}
-                  className={`text-[11px] px-2.5 py-1 rounded-lg border transition flex items-center gap-1 ${
-                    githubToken
-                      ? 'bg-emerald-950/40 border-emerald-500/50 text-emerald-300'
-                      : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:text-white'
-                  }`}
-                  title="GitHub সিঙ্ক সেটিংস"
-                >
-                  <Key className="w-3 h-3 text-emerald-400" />
-                  {githubToken ? 'গিটহাব সিঙ্ক সক্রিয় ✓' : 'গিটহাব কানেক্ট করুন'}
-                </button>
-                <button
-                  onClick={() => setIsAuthenticated(false)}
-                  className="text-[11px] text-zinc-400 hover:text-white underline ml-1"
-                >
-                  লগআউট
-                </button>
-              </div>
-            </div>
-
-            {/* GitHub Token Setup Drawer (One-time connection) */}
-            {showTokenSettings && (
-              <form onSubmit={handleSaveToken} className="mb-4 p-4 bg-zinc-800/95 border border-emerald-500/40 rounded-2xl space-y-3 text-xs shadow-xl">
-                <div className="flex items-center justify-between pb-2 border-b border-zinc-700">
-                  <span className="font-bold text-emerald-400 flex items-center gap-1.5 text-sm">
-                    <Key className="w-4 h-4 text-emerald-400" />
-                    GitHub লাইভ সিঙ্ক কনফিগারেশন
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setShowTokenSettings(false)}
-                    className="text-zinc-400 hover:text-white p-1"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
-
-                <p className="text-[11px] text-zinc-300 leading-relaxed">
-                  আপনার ওয়েবসাইটের ভিডিওগুলো সবার ফোনে লাইভ করার জন্য আপনার GitHub রিপোজিটরি ও টোকেন সেট করুন:
+        {/* Tab 1: Video List (1 to 100) */}
+        {activeTab === 'videos' && (
+          <div className="flex-1 overflow-y-auto no-scrollbar space-y-2 pr-1 min-h-0">
+            {safeVideos.length === 0 ? (
+              <div className="text-center py-12 bg-zinc-800/40 rounded-2xl border border-zinc-800/80 text-zinc-400 text-xs">
+                <Video className="w-10 h-10 text-zinc-600 mx-auto mb-2" />
+                <p className="font-bold text-white text-sm mb-1">কোনো ভিডিও যোগ করা নেই</p>
+                <p className="text-zinc-400 max-w-xs mx-auto mb-4 leading-relaxed">
+                  উপরের "+ নতুন ভিডিও" ট্যাবে গিয়ে আপনার ড্রপবক্স লিংক দিয়ে প্রথম ভিডিও যোগ করুন।
                 </p>
-
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="block text-[10px] text-zinc-400 font-medium mb-1">
-                      GitHub ইউজারনেম (Owner):
-                    </label>
-                    <input
-                      type="text"
-                      value={repoOwner}
-                      onChange={(e) => setRepoOwner(e.target.value.trim())}
-                      placeholder="mahabubxblog"
-                      className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-2.5 py-1.5 text-xs text-white font-mono"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] text-zinc-400 font-medium mb-1">
-                      রিপোজিটরির নাম (Repo):
-                    </label>
-                    <input
-                      type="text"
-                      value={repoName}
-                      onChange={(e) => setRepoName(e.target.value.trim())}
-                      placeholder="mahabubxblog.github.io"
-                      className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-2.5 py-1.5 text-xs text-white font-mono"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-[10px] text-zinc-400 font-medium mb-1 flex items-center justify-between">
-                    <span>GitHub Access Token (ghp_... বা github_pat_...)</span>
-                    <span className="text-[10px] text-amber-400">('repo' পারমিশন আবশ্যক)</span>
-                  </label>
-                  <div className="flex gap-2">
-                    <input
-                      type="password"
-                      value={githubToken}
-                      onChange={(e) => setGithubToken(e.target.value.trim())}
-                      placeholder="ghp_... টোকেন পেস্ট করুন"
-                      className="flex-1 bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-1.5 text-xs text-white font-mono"
-                    />
-                    <button
-                      type="button"
-                      onClick={handleTestToken}
-                      disabled={isTestingToken}
-                      className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-600 rounded-lg text-xs font-medium flex items-center gap-1 shrink-0"
-                    >
-                      {isTestingToken ? (
-                        <>
-                          <RefreshCw className="w-3 h-3 animate-spin" /> চেকিং...
-                        </>
-                      ) : (
-                        'যাচাই করুন'
-                      )}
-                    </button>
-                    <button
-                      type="submit"
-                      className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold rounded-lg text-xs shadow-md shadow-emerald-600/30 shrink-0"
-                    >
-                      সেভ
-                    </button>
-                  </div>
-                </div>
-
-                {/* Live Test Feedback */}
-                {testResult && (
-                  <div
-                    className={`p-2.5 rounded-xl text-xs flex items-start gap-2 ${
-                      testResult.success
-                        ? 'bg-emerald-950/60 border border-emerald-800 text-emerald-200'
-                        : 'bg-red-950/60 border border-red-800 text-red-200'
-                    }`}
-                  >
-                    {testResult.success ? (
-                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-                    ) : (
-                      <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
-                    )}
-                    <span className="leading-relaxed">{testResult.msg}</span>
-                  </div>
-                )}
-
-                {/* 1-Click Classic Token Guide Card */}
-                <div className="p-3 bg-zinc-900/90 border border-zinc-700/80 rounded-xl space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-semibold text-rose-400 flex items-center gap-1">
-                      <Sparkles className="w-3.5 h-3.5" /> সহজ ১-ক্লিক সমাধান (Classic Token):
-                    </span>
-                    <a
-                      href="https://github.com/settings/tokens/new?scopes=repo&description=SnipTok+Admin"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="px-2.5 py-1 bg-rose-600 hover:bg-rose-500 text-white rounded-lg text-[10px] font-bold inline-flex items-center gap-1 shadow-sm"
-                    >
-                      👉 ১-ক্লিকে টোকেন পাতা খুলুন <ExternalLink className="w-2.5 h-2.5" />
-                    </a>
-                  </div>
-                  <ol className="text-[10px] text-zinc-300 list-decimal list-inside space-y-0.5 leading-relaxed">
-                    <li>উপরের বোতামে চাপ দিন (এতে <strong>'repo'</strong> অপশনটি নিজে থেকেই টিক দেওয়া থাকবে)।</li>
-                    <li>পেজের একেবারে নিচে গিয়ে সবুজ <strong>'Generate token'</strong> বাটনে চাপ দিন।</li>
-                    <li>যে <code>ghp_...</code> কোডটি পাবেন সেটি কপি করে উপরের বক্সে পেস্ট করে সেভ করুন।</li>
-                  </ol>
-                </div>
-
-                {/* Actions */}
-                <div className="flex items-center justify-between pt-1 border-t border-zinc-800 text-[10px]">
-                  <button
-                    type="button"
-                    onClick={handleDownloadJson}
-                    className="text-zinc-300 hover:text-white flex items-center gap-1 underline"
-                  >
-                    <DownloadCloud className="w-3 h-3 text-rose-400" />
-                    videos.json ফাইল ডাউনলোড
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleCopyJson}
-                    className="text-zinc-300 hover:text-white flex items-center gap-1"
-                  >
-                    {isCopiedJson ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-                    {isCopiedJson ? 'কপি হয়েছে' : 'JSON টেক্সট কপি করুন'}
-                  </button>
-                </div>
-              </form>
-            )}
-
-            {/* Action Header */}
-            {!showForm && (
-              <div className="flex items-center justify-between mb-3 px-1">
-                <span className="text-xs text-zinc-400 font-medium">
-                  ভিডিও স্লট তালিকা (১ থেকে ১০০)
-                </span>
                 <button
                   onClick={handleOpenAdd}
-                  className="px-3.5 py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-md shadow-rose-600/30 transition"
+                  className="px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white font-semibold text-xs rounded-xl shadow-lg shadow-rose-600/30 transition inline-flex items-center gap-1.5"
                 >
-                  <Plus className="w-4 h-4" />
-                  নতুন ভিডিও যোগ করুন
+                  <Plus className="w-4 h-4" /> ড্রপবক্স থেকে ভিডিও যোগ করুন
                 </button>
               </div>
-            )}
-
-            {/* Form for Add/Edit */}
-            {showForm ? (
-              <form onSubmit={handleFormSubmit} className="bg-zinc-800/80 border border-zinc-700 rounded-2xl p-4 mb-4 space-y-3">
-                <div className="flex items-center justify-between pb-2 border-b border-zinc-700">
-                  <span className="text-xs font-bold text-rose-400 flex items-center gap-1">
-                    <Sparkles className="w-3.5 h-3.5" />
-                    {editingVideoId ? 'ভিডিও পরিবর্তন / এডিট করুন' : '+ ড্রপবক্স থেকে নতুন ভিডিও যুক্ত করুন'}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setShowForm(false)}
-                    className="text-xs text-zinc-400 hover:text-white"
-                  >
-                    বন্ধ
-                  </button>
-                </div>
-
-                {formMsg && (
-                  <div
-                    className={`p-3 rounded-xl text-xs flex flex-col gap-2 ${
-                      formMsg.type === 'success'
-                        ? 'bg-emerald-950/60 border border-emerald-800 text-emerald-200'
-                        : 'bg-red-950/60 border border-red-800 text-red-200'
-                    }`}
-                  >
-                    <div className="flex items-start gap-2">
-                      {formMsg.type === 'success' ? (
-                        <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-                      ) : (
-                        <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
-                      )}
-                      <span className="leading-relaxed">{formMsg.text}</span>
-                    </div>
-
-                    {formMsg.type === 'error' && (
-                      <div className="pt-2 border-t border-red-900/60 flex flex-wrap items-center gap-2 text-[11px]">
-                        <a
-                          href="https://github.com/settings/tokens/new?scopes=repo&description=SnipTok+Admin"
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="px-2.5 py-1 bg-rose-600 hover:bg-rose-500 text-white rounded-lg font-medium inline-flex items-center gap-1 shadow-sm"
-                        >
-                          🔑 ১-ক্লিকে Classic Token তৈরি করুন <ExternalLink className="w-2.5 h-2.5" />
-                        </a>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setShowForm(false);
-                            setShowTokenSettings(true);
-                          }}
-                          className="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-lg inline-flex items-center gap-1"
-                        >
-                          <Key className="w-3 h-3 text-amber-400" /> টোকেন সেটিংস খুলুন
-                        </button>
-                        <button
-                          type="button"
-                          onClick={handleDownloadJson}
-                          className="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-lg inline-flex items-center gap-1"
-                        >
-                          <DownloadCloud className="w-3 h-3 text-rose-400" /> videos.json ডাউনলোড
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* Dropbox Link Input */}
-                <div>
-                  <label className="block text-xs font-medium text-zinc-300 mb-1 flex items-center gap-1.5">
-                    <LinkIcon className="w-3.5 h-3.5 text-rose-500" />
-                    ড্রপবক্স ভিডিও লিঙ্ক (Dropbox Share Link) *
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={rawUrl}
-                    onChange={(e) => handleUrlChange(e.target.value)}
-                    placeholder="https://www.dropbox.com/s/.../myvideo.mp4?dl=0"
-                    className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-3 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-rose-500"
-                  />
-                  {rawUrl.includes('dropbox.com') && (
-                    <p className="text-[11px] text-emerald-400 mt-1 flex items-center gap-1">
-                      <CheckCircle2 className="w-3 h-3" />
-                      ড্রপবক্স লিঙ্কটি সরাসরি ডিরেক্ট স্ট্রিমিং ও অফলাইন ক্যাশিং উপযোগী করা হয়েছে!
-                    </p>
-                  )}
-                </div>
-
-                {/* Video Title */}
-                <div>
-                  <label className="block text-xs font-medium text-zinc-300 mb-1">
-                    ভিডিওর শিরোনাম (Title) *
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={title}
-                    onChange={(e) => setTitle(e.target.value)}
-                    placeholder="যেমন: ভিডিও #১: আমার স্পেশাল ট্রাভেল রিলস..."
-                    className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-3 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-rose-500"
-                  />
-                </div>
-
-                {/* Description & Tags */}
-                <div>
-                  <label className="block text-xs font-medium text-zinc-300 mb-1">
-                    ক্যাপশন ও হ্যাশট্যাগ (Description)
-                  </label>
-                  <textarea
-                    rows={2}
-                    value={description}
-                    onChange={(e) => setDescription(e.target.value)}
-                    placeholder="ভিডিও সম্পর্কে কিছু কথা... #shorts #bangla #viral"
-                    className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-3 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-rose-500 resize-none"
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-medium text-zinc-300 mb-1">
-                      ক্রিয়েটরের নাম
-                    </label>
-                    <input
-                      type="text"
-                      value={creator}
-                      onChange={(e) => setCreator(e.target.value)}
-                      className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-rose-500"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-zinc-300 mb-1">
-                      অডিও সাউন্ড
-                    </label>
-                    <input
-                      type="text"
-                      value={audioTrack}
-                      onChange={(e) => setAudioTrack(e.target.value)}
-                      className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-rose-500"
-                    />
-                  </div>
-                </div>
-
-                {/* Preview player */}
-                {previewTestUrl && (
-                  <div className="mt-2 p-2 bg-black/60 rounded-xl border border-zinc-800 flex items-center justify-between">
-                    <span className="text-[11px] text-zinc-400 truncate max-w-[220px]">
-                      টেস্ট প্রিভিউ রেডি
+            ) : (
+              safeVideos.map((vid, index) => (
+                <div
+                  key={vid.id}
+                  className="flex items-center justify-between p-3 rounded-2xl bg-zinc-800/70 border border-zinc-700/60 hover:border-zinc-500 transition"
+                >
+                  <div className="flex items-center gap-2.5 min-w-0 mr-2">
+                    <span className="w-7 h-7 rounded-xl bg-zinc-700/90 text-zinc-200 font-bold text-xs flex items-center justify-center shrink-0 tabular-nums">
+                      #{index + 1}
                     </span>
-                    <a
-                      href={previewTestUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-xs text-rose-400 hover:text-rose-300 flex items-center gap-1"
+                    <div className="min-w-0">
+                      <p className="text-xs font-semibold text-white truncate">{vid.title}</p>
+                      <p className="text-[10px] text-zinc-400 truncate max-w-[180px] md:max-w-xs font-mono">
+                        {vid.videoUrl}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button
+                      onClick={() => {
+                        onSelectVideoToPlay(vid.id);
+                        onClose();
+                      }}
+                      className="p-2 rounded-xl bg-zinc-700 hover:bg-zinc-600 text-zinc-200 transition"
+                      title="প্লে করুন"
                     >
-                      <ExternalLink className="w-3.5 h-3.5" />
-                      লিংক চেক করুন
-                    </a>
+                      <Play className="w-3.5 h-3.5 fill-current" />
+                    </button>
+                    <button
+                      onClick={() => handleOpenEdit(vid)}
+                      className="p-2 rounded-xl bg-zinc-700 hover:bg-zinc-600 text-zinc-200 transition"
+                      title="এডিট / পরিবর্তন"
+                    >
+                      <Edit3 className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={() => handleDelete(vid.id, vid.title)}
+                      className="p-2 rounded-xl bg-rose-950/60 hover:bg-rose-900 border border-rose-800/60 text-rose-400 transition"
+                      title="ডিলিট করুন"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
                   </div>
-                )}
-
-                {/* Buttons */}
-                <div className="flex items-center justify-end gap-2 pt-2 border-t border-zinc-700">
-                  <button
-                    type="button"
-                    onClick={() => setShowForm(false)}
-                    className="px-3.5 py-1.5 rounded-xl border border-zinc-700 text-xs text-zinc-300 hover:bg-zinc-800"
-                  >
-                    বাতিল
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={isSubmitting}
-                    className="px-4 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-semibold text-xs flex items-center gap-1.5 shadow-md shadow-rose-600/30 transition disabled:opacity-50"
-                  >
-                    {isSubmitting ? (
-                      <>
-                        <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                        সেভ ও সিঙ্ক হচ্ছে...
-                      </>
-                    ) : (
-                      'সেভ করুন (সবার ফোনে লাইভ)'
-                    )}
-                  </button>
                 </div>
-              </form>
-            ) : null}
-
-            {/* Video List (Slots 1 to 100) */}
-            <div className="space-y-2">
-              {videos.length === 0 ? (
-                <div className="text-center py-8 text-zinc-500 text-xs">
-                  কোনো ভিডিও যোগ করা নেই। উপরের "+" বাটনে ক্লিক করে ড্রপবক্স থেকে ভিডিও যোগ করুন।
-                </div>
-              ) : (
-                videos.map((vid, index) => (
-                  <div
-                    key={vid.id}
-                    className="flex items-center justify-between p-3 rounded-xl bg-zinc-800/60 border border-zinc-700/50 hover:border-zinc-600 transition"
-                  >
-                    <div className="flex items-center gap-2.5 min-w-0 mr-2">
-                      <span className="w-6 h-6 rounded-lg bg-zinc-700 text-zinc-300 font-bold text-[11px] flex items-center justify-center shrink-0 tabular-nums">
-                        #{index + 1}
-                      </span>
-                      <div className="min-w-0">
-                        <p className="text-xs font-semibold text-white truncate">{vid.title}</p>
-                        <p className="text-[10px] text-zinc-400 truncate max-w-[200px] md:max-w-xs">
-                          {vid.videoUrl}
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      <button
-                        onClick={() => {
-                          onSelectVideoToPlay(vid.id);
-                          onClose();
-                        }}
-                        className="p-1.5 rounded-lg bg-zinc-700 hover:bg-zinc-600 text-zinc-200 transition"
-                        title="প্লে করুন"
-                      >
-                        <Play className="w-3.5 h-3.5 fill-current" />
-                      </button>
-                      <button
-                        onClick={() => handleOpenEdit(vid)}
-                        className="p-1.5 rounded-lg bg-zinc-700 hover:bg-zinc-600 text-zinc-200 transition"
-                        title="এডিট / পরিবর্তন"
-                      >
-                        <Edit3 className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        onClick={() => handleDelete(vid.id, vid.title)}
-                        className="p-1.5 rounded-lg bg-rose-950/50 hover:bg-rose-900 border border-rose-800/50 text-rose-400 transition"
-                        title="ডিলিট করুন"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
+              ))
+            )}
           </div>
         )}
 
-        {/* Footer */}
-        <div className="pt-3 border-t border-zinc-800 flex items-center justify-between text-[11px] text-zinc-500">
-          <span className="flex items-center gap-1 text-zinc-500">
-            <Lock className="w-3 h-3 text-zinc-500" />
-            সুরক্ষিত ক্রিয়েটর স্টুডিও
+        {/* Tab 2: Add / Edit Video Form */}
+        {activeTab === 'add' && (
+          <form onSubmit={handleFormSubmit} className="flex-1 overflow-y-auto no-scrollbar space-y-3 pr-1 min-h-0">
+            {formMsg && (
+              <div
+                className={`p-3 rounded-2xl text-xs flex items-start gap-2 ${
+                  formMsg.type === 'success'
+                    ? 'bg-emerald-950/80 border border-emerald-800 text-emerald-200'
+                    : 'bg-red-950/80 border border-red-800 text-red-200'
+                }`}
+              >
+                {formMsg.type === 'success' ? (
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                ) : (
+                  <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+                )}
+                <span className="leading-relaxed">{formMsg.text}</span>
+              </div>
+            )}
+
+            {/* Dropbox Link Input */}
+            <div>
+              <label className="block text-xs font-semibold text-zinc-200 mb-1 flex items-center gap-1.5">
+                <LinkIcon className="w-3.5 h-3.5 text-rose-500" />
+                ড্রপবক্স ভিডিও লিঙ্ক (Dropbox Share Link) *
+              </label>
+              <input
+                type="text"
+                required
+                value={rawUrl}
+                onChange={(e) => handleUrlChange(e.target.value)}
+                placeholder="https://www.dropbox.com/scl/fi/.../video.mp4?dl=0"
+                className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-rose-500 font-mono"
+              />
+              {rawUrl.includes('dropbox.com') && (
+                <p className="text-[11px] text-emerald-400 mt-1 flex items-center gap-1">
+                  <CheckCircle2 className="w-3 h-3 shrink-0" />
+                  ড্রপবক্স লিঙ্কটি লাইভ স্ট্রিমিং ও অফলাইন ক্যাশিং উপযোগী হিসেবে সনাক্ত হয়েছে!
+                </p>
+              )}
+            </div>
+
+            {/* Video Title */}
+            <div>
+              <label className="block text-xs font-semibold text-zinc-200 mb-1">
+                ভিডিওর শিরোনাম (Title) *
+              </label>
+              <input
+                type="text"
+                required
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                placeholder="যেমন: ভিডিও #১: আমার স্পেশাল ট্রাভেল রিলস..."
+                className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-rose-500"
+              />
+            </div>
+
+            {/* Description & Tags */}
+            <div>
+              <label className="block text-xs font-semibold text-zinc-200 mb-1">
+                ক্যাপশন ও হ্যাশট্যাগ (Description)
+              </label>
+              <textarea
+                rows={2}
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="ভিডিও সম্পর্কে কিছু কথা... #shorts #viral #bangla"
+                className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-rose-500 resize-none"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-[11px] font-medium text-zinc-300 mb-1">
+                  ক্রিয়েটরের নাম
+                </label>
+                <input
+                  type="text"
+                  value={creator}
+                  onChange={(e) => setCreator(e.target.value)}
+                  className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-rose-500"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-medium text-zinc-300 mb-1">
+                  অডিও সাউন্ড
+                </label>
+                <input
+                  type="text"
+                  value={audioTrack}
+                  onChange={(e) => setAudioTrack(e.target.value)}
+                  className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-rose-500"
+                />
+              </div>
+            </div>
+
+            {/* Preview player */}
+            {previewTestUrl && (
+              <div className="p-2.5 bg-zinc-950 rounded-xl border border-zinc-800 flex items-center justify-between">
+                <span className="text-[11px] text-zinc-400 truncate max-w-[200px] flex items-center gap-1">
+                  <Eye className="w-3.5 h-3.5 text-emerald-400" /> লিংক প্রস্তুত
+                </span>
+                <a
+                  href={previewTestUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs text-rose-400 hover:text-rose-300 flex items-center gap-1 font-semibold"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                  লিংক টেস্ট করুন
+                </a>
+              </div>
+            )}
+
+            {/* Form Action Buttons */}
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-zinc-800">
+              <button
+                type="button"
+                onClick={() => setActiveTab('videos')}
+                className="px-4 py-2 rounded-xl border border-zinc-700 text-xs text-zinc-300 hover:bg-zinc-800 transition"
+              >
+                বাতিল
+              </button>
+              <button
+                type="submit"
+                disabled={isSubmitting}
+                className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-rose-600 to-pink-600 hover:from-rose-500 hover:to-pink-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-lg shadow-rose-600/30 transition disabled:opacity-50"
+              >
+                {isSubmitting ? (
+                  <>
+                    <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    সেভ হচ্ছে...
+                  </>
+                ) : (
+                  '✓ সেভ করুন (সবার ফোনে লাইভ)'
+                )}
+              </button>
+            </div>
+          </form>
+        )}
+
+        {/* Tab 3: GitHub Live Sync & Backup Settings */}
+        {activeTab === 'github' && (
+          <form onSubmit={handleSaveToken} className="flex-1 overflow-y-auto no-scrollbar space-y-3.5 pr-1 min-h-0">
+            <div className="p-3 bg-emerald-950/40 border border-emerald-500/40 rounded-2xl text-xs text-emerald-200">
+              <p className="font-semibold text-emerald-400 mb-1 flex items-center gap-1.5">
+                <ShieldCheck className="w-4 h-4" /> GitHub লাইভ সিঙ্ক সুবিধা:
+              </p>
+              <p className="text-[11px] text-zinc-300 leading-relaxed">
+                টোকেন সেট থাকলে ওয়েবসাইট থেকেই ড্রপবক্সের ভিডিও যোগ করলে তা স্বয়ংক্রিয়ভাবে গিটহাবে সেভ হবে এবং বিশ্বের সকল ইউজারের ফোনে লাইভ আপডেট হয়ে যাবে।
+              </p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="block text-[11px] text-zinc-300 font-medium mb-1">
+                  GitHub ইউজারনেম (Owner):
+                </label>
+                <input
+                  type="text"
+                  value={repoOwner}
+                  onChange={(e) => setRepoOwner(e.target.value.trim())}
+                  placeholder="mahabubxblog"
+                  className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2 text-xs text-white font-mono"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] text-zinc-300 font-medium mb-1">
+                  রিপোজিটরির নাম (Repo):
+                </label>
+                <input
+                  type="text"
+                  value={repoName}
+                  onChange={(e) => setRepoName(e.target.value.trim())}
+                  placeholder="mahabubxblog.github.io"
+                  className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2 text-xs text-white font-mono"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-[11px] text-zinc-300 font-medium mb-1 flex items-center justify-between">
+                <span>GitHub Personal Access Token:</span>
+                <span className="text-[10px] text-amber-400 font-normal">('repo' পারমিশন আবশ্যক)</span>
+              </label>
+              <div className="flex gap-2">
+                <input
+                  type="password"
+                  value={githubToken}
+                  onChange={(e) => setGithubToken(e.target.value.trim())}
+                  placeholder="ghp_... টোকেন পেস্ট করুন"
+                  className="flex-1 bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2 text-xs text-white font-mono"
+                />
+                <button
+                  type="button"
+                  onClick={handleTestToken}
+                  disabled={isTestingToken}
+                  className="px-3 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-600 rounded-xl text-xs font-semibold flex items-center gap-1 shrink-0"
+                >
+                  {isTestingToken ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" /> চেকিং...
+                    </>
+                  ) : (
+                    'যাচাই করুন'
+                  )}
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs shadow-md shadow-emerald-600/30 shrink-0"
+                >
+                  সেভ
+                </button>
+              </div>
+            </div>
+
+            {/* Live Test Feedback */}
+            {testResult && (
+              <div
+                className={`p-3 rounded-2xl text-xs flex items-start gap-2 ${
+                  testResult.success
+                    ? 'bg-emerald-950/80 border border-emerald-800 text-emerald-200'
+                    : 'bg-red-950/80 border border-red-800 text-red-200'
+                }`}
+              >
+                {testResult.success ? (
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                ) : (
+                  <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+                )}
+                <span className="leading-relaxed">{testResult.msg}</span>
+              </div>
+            )}
+
+            {/* Classic Token 1-Click Link */}
+            <div className="p-3.5 bg-zinc-950 border border-zinc-800 rounded-2xl space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-rose-400 flex items-center gap-1">
+                  <Sparkles className="w-3.5 h-3.5" /> ১-ক্লিকে টোকেন তৈরি করুন:
+                </span>
+                <a
+                  href="https://github.com/settings/tokens/new?scopes=repo&description=SnipTok+Admin"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-3 py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-[11px] font-bold inline-flex items-center gap-1 shadow-sm"
+                >
+                  টোকেন পেজ খুলুন <ExternalLink className="w-3 h-3" />
+                </a>
+              </div>
+              <ol className="text-[11px] text-zinc-400 list-decimal list-inside space-y-1 leading-relaxed">
+                <li>উপরের বোতামে চাপ দিন (এতে <strong>'repo'</strong> টিক দেওয়া থাকবে)।</li>
+                <li>নিচে গিয়ে <strong>'Generate token'</strong> বাটনে চাপ দিন।</li>
+                <li>যে <code>ghp_...</code> কোডটি পাবেন তা উপরের বক্সে পেস্ট করে সেভ করুন।</li>
+              </ol>
+            </div>
+
+            {/* Offline Backup Tools */}
+            <div className="flex items-center justify-between pt-2 border-t border-zinc-800 text-xs">
+              <button
+                type="button"
+                onClick={handleDownloadJson}
+                className="text-zinc-300 hover:text-white flex items-center gap-1 underline font-medium"
+              >
+                <DownloadCloud className="w-3.5 h-3.5 text-rose-400" />
+                videos.json ফাইল ডাউনলোড
+              </button>
+              <button
+                type="button"
+                onClick={handleCopyJson}
+                className="text-zinc-300 hover:text-white flex items-center gap-1 font-medium"
+              >
+                {isCopiedJson ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                {isCopiedJson ? 'কপি হয়েছে' : 'JSON টেক্সট কপি করুন'}
+              </button>
+            </div>
+          </form>
+        )}
+
+        {/* Modal Footer */}
+        <div className="pt-3 border-t border-zinc-800 flex items-center justify-between text-xs text-zinc-400 shrink-0">
+          <span className="flex items-center gap-1 text-[11px]">
+            <Settings className="w-3 h-3 text-rose-400" /> ক্রিয়েটর স্টুডিও অ্যাক্টিভ
           </span>
           <button
             onClick={onClose}
-            className="px-4 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-xs text-white transition"
+            className="px-4 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-xs text-white transition font-medium"
           >
             বন্ধ করুন
           </button>
